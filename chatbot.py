@@ -223,7 +223,7 @@ Rules:
 - Never mention OpenAI, Groq, Meta, or GPT.
 """
 
-# ---------------- CACHED CONNECTIONS (SPEED BOOST) ----------------
+# ---------------- CACHED CONNECTIONS (BIG SPEED BOOST) ----------------
 @st.cache_resource
 def get_mongo_client():
     return MongoClient(st.secrets["MONGODB_URI"])
@@ -238,48 +238,43 @@ chat_collection = db["chats"]
 
 client = get_groq_client()
 
+# ---------------- WARMUP (REDUCES FIRST MESSAGE LAG) ----------------
+if "warmup_done" not in st.session_state:
+    try:
+        client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[{"role": "system", "content": "warmup"}],
+            max_tokens=1
+        )
+    except:
+        pass
+    st.session_state["warmup_done"] = True
+
 # ---------------- CSS ----------------
 st.markdown("""
 <style>
 body { background-color: #0e0e0e; }
 
-.header {
-    text-align: center;
-    color: #92487A;
-    margin-bottom: 4px;
-}
+.header { text-align:center; color:#92487A; margin-bottom:4px; }
+.intro { text-align:center; color:#aaa; margin-top:10px; }
+.help { text-align:center; color:#fff; font-size:20px; margin-bottom:20px; }
 
-.intro {
-    text-align: center;
-    color: #aaa;
-    margin-top: 10px;
-}
-
-.help {
-    text-align: center;
-    color: #ffffff;
-    font-size: 20px;
-    margin-bottom: 20px;
-}
-
-.msg-row { display: flex; margin-bottom: 10px; }
-.user-row { justify-content: flex-end; }
-.bot-row { justify-content: flex-start; }
+.msg-row { display:flex; margin-bottom:10px; }
+.user-row { justify-content:flex-end; }
+.bot-row { justify-content:flex-start; }
 
 .user-msg {
-    background: #85409D;
-    color: white;
-    padding: 12px 16px;
-    border-radius: 18px 18px 4px 18px;
-    max-width: 70%;
+    background:#85409D; color:white;
+    padding:12px 16px;
+    border-radius:18px 18px 4px 18px;
+    max-width:70%;
 }
 
 .bot-msg {
-    background: #666F80;
-    color: white;
-    padding: 12px 16px;
-    border-radius: 18px 18px 18px 4px;
-    max-width: 70%;
+    background:#666F80; color:white;
+    padding:12px 16px;
+    border-radius:18px 18px 18px 4px;
+    max-width:70%;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -297,8 +292,7 @@ def get_today_chat(username, today, session_key):
             "username": username,
             "date": today,
             "session": session_key,
-            # 🔥 only user + assistant messages are stored
-            "messages": []
+            "messages": []   # 🔥 system message NOT stored
         }
         result = chat_collection.insert_one(chat)
         chat["_id"] = result.inserted_id
@@ -361,28 +355,43 @@ with st.form("chat_form", clear_on_submit=True):
     user_input = st.text_input("Type your message")
     send = st.form_submit_button("Send")
 
+# ---------------- INSTANT RESPONSE FLOW ----------------
 if send and user_input:
-    # save user message
+    # 1️⃣ Save user message immediately
     current_chat.append({"role": "user", "content": user_input})
 
-    # 🔑 system prompt injected ONLY for LLM call
+    # 2️⃣ Show placeholder instantly (NO WAIT)
+    placeholder = st.empty()
+    placeholder.markdown(
+        '<div class="msg-row bot-row"><div class="bot-msg">AURA is thinking...</div></div>',
+        unsafe_allow_html=True
+    )
+
+    # 3️⃣ Prepare LLM messages (system injected dynamically)
     messages_for_llm = [
         {"role": "system", "content": SYSTEM_PROMPT},
         *current_chat
     ]
 
-    with st.spinner("AURA is thinking..."):
-        response = client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=messages_for_llm,
-            temperature=0.7,
-            max_tokens=250
-        )
+    # 4️⃣ Call Groq (actual slow part)
+    response = client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=messages_for_llm,
+        temperature=0.7,
+        max_tokens=180   # 🔥 slightly smaller = faster
+    )
 
     reply = response.choices[0].message.content
 
-    # save assistant message
-    current_chat.append({"role": "assistant", "content": reply})
+    # 5️⃣ Update UI instantly
+    placeholder.markdown(
+        f'<div class="msg-row bot-row"><div class="bot-msg">{reply}</div></div>',
+        unsafe_allow_html=True
+    )
 
+    # 6️⃣ Save assistant message (after UI update)
+    current_chat.append({"role": "assistant", "content": reply})
     save_messages(chat_doc["_id"], current_chat)
+
     st.rerun()
+
