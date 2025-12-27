@@ -205,20 +205,11 @@
 
 import streamlit as st
 from groq import Groq
-
 from datetime import date, datetime
 from pymongo import MongoClient
 
-# ---------------- DB CONNECTION ----------------
-mongo_client = MongoClient(st.secrets["MONGODB_URI"])
-db = mongo_client["aura_db"]
-chat_collection = db["chats"]
-
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(page_title="AURA", layout="centered")
-
-# ---------------- GROQ CLIENT ----------------
-client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 TODAY = str(date.today())
 
@@ -232,24 +223,68 @@ Rules:
 - Never mention OpenAI, Groq, Meta, or GPT.
 """
 
+# ---------------- CACHED CONNECTIONS (SPEED BOOST) ----------------
+@st.cache_resource
+def get_mongo_client():
+    return MongoClient(st.secrets["MONGODB_URI"])
+
+@st.cache_resource
+def get_groq_client():
+    return Groq(api_key=st.secrets["GROQ_API_KEY"])
+
+mongo_client = get_mongo_client()
+db = mongo_client["aura_db"]
+chat_collection = db["chats"]
+
+client = get_groq_client()
+
 # ---------------- CSS ----------------
 st.markdown("""
 <style>
 body { background-color: #0e0e0e; }
-.header { text-align:center;color:#92487A; }
-.intro { text-align:center;color:#aaa;margin-top:10px; }
-.help { text-align:center;color:#fff;font-size:20px;margin-bottom:20px; }
-.msg-row { display:flex;margin-bottom:10px; }
-.user-row { justify-content:flex-end; }
-.bot-row { justify-content:flex-start; }
-.user-msg { background:#85409D;color:white;padding:12px 16px;
-            border-radius:18px 18px 4px 18px;max-width:70%; }
-.bot-msg { background:#666F80;color:white;padding:12px 16px;
-           border-radius:18px 18px 18px 4px;max-width:70%; }
+
+.header {
+    text-align: center;
+    color: #92487A;
+    margin-bottom: 4px;
+}
+
+.intro {
+    text-align: center;
+    color: #aaa;
+    margin-top: 10px;
+}
+
+.help {
+    text-align: center;
+    color: #ffffff;
+    font-size: 20px;
+    margin-bottom: 20px;
+}
+
+.msg-row { display: flex; margin-bottom: 10px; }
+.user-row { justify-content: flex-end; }
+.bot-row { justify-content: flex-start; }
+
+.user-msg {
+    background: #85409D;
+    color: white;
+    padding: 12px 16px;
+    border-radius: 18px 18px 4px 18px;
+    max-width: 70%;
+}
+
+.bot-msg {
+    background: #666F80;
+    color: white;
+    padding: 12px 16px;
+    border-radius: 18px 18px 18px 4px;
+    max-width: 70%;
+}
 </style>
 """, unsafe_allow_html=True)
 
-# ---------------- DB HELPERS ----------------
+# ---------------- DATABASE HELPERS ----------------
 def get_today_chat(username, today, session_key):
     chat = chat_collection.find_one({
         "username": username,
@@ -262,7 +297,8 @@ def get_today_chat(username, today, session_key):
             "username": username,
             "date": today,
             "session": session_key,
-            "messages": [{"role": "system", "content": SYSTEM_PROMPT}]
+            # 🔥 only user + assistant messages are stored
+            "messages": []
         }
         result = chat_collection.insert_one(chat)
         chat["_id"] = result.inserted_id
@@ -310,24 +346,42 @@ if st.button("Clear Chat"):
 # ---------------- CHAT DISPLAY ----------------
 for msg in current_chat:
     if msg["role"] == "user":
-        st.markdown(f'<div class="msg-row user-row"><div class="user-msg">{msg["content"]}</div></div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="msg-row user-row"><div class="user-msg">{msg["content"]}</div></div>',
+            unsafe_allow_html=True
+        )
     elif msg["role"] == "assistant":
-        st.markdown(f'<div class="msg-row bot-row"><div class="bot-msg">{msg["content"]}</div></div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="msg-row bot-row"><div class="bot-msg">{msg["content"]}</div></div>',
+            unsafe_allow_html=True
+        )
 
-# ---------------- INPUT ----------------
-user_input = st.chat_input("Type your message...")
+# ---------------- INPUT (MOBILE + DESKTOP) ----------------
+with st.form("chat_form", clear_on_submit=True):
+    user_input = st.text_input("Type your message")
+    send = st.form_submit_button("Send")
 
-if user_input:
+if send and user_input:
+    # save user message
     current_chat.append({"role": "user", "content": user_input})
 
-    response = client.chat.completions.create(
-        model="llama-3.1-8b-instant",
-        messages=current_chat,
-        temperature=0.7,
-        max_tokens=250
-    )
+    # 🔑 system prompt injected ONLY for LLM call
+    messages_for_llm = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        *current_chat
+    ]
+
+    with st.spinner("AURA is thinking..."):
+        response = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=messages_for_llm,
+            temperature=0.7,
+            max_tokens=250
+        )
 
     reply = response.choices[0].message.content
+
+    # save assistant message
     current_chat.append({"role": "assistant", "content": reply})
 
     save_messages(chat_doc["_id"], current_chat)
