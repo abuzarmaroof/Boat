@@ -223,7 +223,7 @@ Rules:
 - Never mention OpenAI, Groq, Meta, or GPT.
 """
 
-# ---------------- CACHED CONNECTIONS (BIG SPEED BOOST) ----------------
+# ---------------- CACHED CONNECTIONS ----------------
 @st.cache_resource
 def get_mongo_client():
     return MongoClient(st.secrets["MONGODB_URI"])
@@ -237,18 +237,6 @@ db = mongo_client["aura_db"]
 chat_collection = db["chats"]
 
 client = get_groq_client()
-
-# ---------------- WARMUP (REDUCES FIRST MESSAGE LAG) ----------------
-if "warmup_done" not in st.session_state:
-    try:
-        client.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[{"role": "system", "content": "warmup"}],
-            max_tokens=1
-        )
-    except:
-        pass
-    st.session_state["warmup_done"] = True
 
 # ---------------- CSS ----------------
 st.markdown("""
@@ -355,41 +343,41 @@ with st.form("chat_form", clear_on_submit=True):
     user_input = st.text_input("Type your message")
     send = st.form_submit_button("Send")
 
-# ---------------- INSTANT RESPONSE FLOW ----------------
+# ---------------- CHATGPT-STYLE THINKING FLOW ----------------
 if send and user_input:
     # 1️⃣ Save user message immediately
     current_chat.append({"role": "user", "content": user_input})
 
-    # 2️⃣ Show placeholder instantly (NO WAIT)
-    placeholder = st.empty()
-    placeholder.markdown(
-        '<div class="msg-row bot-row"><div class="bot-msg">AURA is thinking...</div></div>',
+    # 2️⃣ Show "Thinking..." bubble instantly
+    thinking_placeholder = st.empty()
+    thinking_placeholder.markdown(
+        '<div class="msg-row bot-row"><div class="bot-msg">Thinking...</div></div>',
         unsafe_allow_html=True
     )
 
-    # 3️⃣ Prepare LLM messages (system injected dynamically)
+    # 3️⃣ Prepare messages for LLM (system injected dynamically)
     messages_for_llm = [
         {"role": "system", "content": SYSTEM_PROMPT},
         *current_chat
     ]
 
-    # 4️⃣ Call Groq (actual slow part)
+    # 4️⃣ Call Groq (slow part, but UI already updated)
     response = client.chat.completions.create(
         model="llama-3.1-8b-instant",
         messages=messages_for_llm,
         temperature=0.7,
-        max_tokens=180   # 🔥 slightly smaller = faster
+        max_tokens=180
     )
 
     reply = response.choices[0].message.content
 
-    # 5️⃣ Update UI instantly
-    placeholder.markdown(
+    # 5️⃣ Replace "Thinking..." with actual reply
+    thinking_placeholder.markdown(
         f'<div class="msg-row bot-row"><div class="bot-msg">{reply}</div></div>',
         unsafe_allow_html=True
     )
 
-    # 6️⃣ Save assistant message (after UI update)
+    # 6️⃣ Save assistant message
     current_chat.append({"role": "assistant", "content": reply})
     save_messages(chat_doc["_id"], current_chat)
 
