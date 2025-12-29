@@ -1,4 +1,183 @@
 
+# import streamlit as st
+# from groq import Groq
+# from datetime import date, datetime
+# from pymongo import MongoClient
+
+# # ---------------- PAGE CONFIG ----------------
+# st.set_page_config(page_title="AURA", layout="centered")
+
+# TODAY = str(date.today())
+
+# SYSTEM_PROMPT = """
+# Your name is AURA.
+# You are a personal AI assistant created by Abuzar Maroof.
+
+# Rules:
+# - If asked your name → say "My name is AURA."
+# - If asked who made you → say "I was created by Abuzar Maroof."
+# - Never mention OpenAI, Groq, Meta, or GPT.
+# """
+
+# # ---------------- CACHED CONNECTIONS ----------------
+# @st.cache_resource
+# def get_mongo_client():
+#     return MongoClient(st.secrets["MONGODB_URI"])
+
+# @st.cache_resource
+# def get_groq_client():
+#     return Groq(api_key=st.secrets["GROQ_API_KEY"])
+
+# mongo_client = get_mongo_client()
+# db = mongo_client["aura_db"]
+# chat_collection = db["chats"]
+
+# client = get_groq_client()
+
+# # ---------------- CSS ----------------
+# st.markdown("""
+# <style>
+# body { background-color: #0e0e0e; }
+
+# .header { text-align:center; color:#92487A; margin-bottom:4px; }
+# .intro { text-align:center; color:#aaa; margin-top:10px; }
+# .help { text-align:center; color:#fff; font-size:20px; margin-bottom:20px; }
+
+# .msg-row { display:flex; margin-bottom:10px; }
+# .user-row { justify-content:flex-end; }
+# .bot-row { justify-content:flex-start; }
+
+# .user-msg {
+#     background:#85409D; color:white;
+#     padding:12px 16px;
+#     border-radius:18px 18px 4px 18px;
+#     max-width:70%;
+# }
+
+# .bot-msg {
+#     background:#666F80; color:white;
+#     padding:12px 16px;
+#     border-radius:18px 18px 18px 4px;
+#     max-width:70%;
+# }
+# </style>
+# """, unsafe_allow_html=True)
+
+# # ---------------- DATABASE HELPERS ----------------
+# def get_today_chat(username, today, session_key):
+#     chat = chat_collection.find_one({
+#         "username": username,
+#         "date": today,
+#         "session": session_key
+#     })
+
+#     if not chat:
+#         chat = {
+#             "username": username,
+#             "date": today,
+#             "session": session_key,
+#             "messages": []   # 🔥 system message NOT stored
+#         }
+#         result = chat_collection.insert_one(chat)
+#         chat["_id"] = result.inserted_id
+
+#     return chat
+
+# def save_messages(chat_id, messages):
+#     chat_collection.update_one(
+#         {"_id": chat_id},
+#         {"$set": {"messages": messages}}
+#     )
+
+# # ---------------- SESSION INIT ----------------
+# if "username" not in st.session_state:
+#     st.session_state.username = None
+
+# if "session_start" not in st.session_state:
+#     st.session_state.session_start = datetime.now().strftime("%H:%M:%S")
+
+# # ---------------- USER NAME ----------------
+# if st.session_state.username is None:
+#     st.markdown("<h2 style='text-align:center'>Welcome</h2>", unsafe_allow_html=True)
+#     name = st.text_input("Enter your name")
+#     if name:
+#         st.session_state.username = name.strip().title()
+#         st.rerun()
+#     st.stop()
+
+# username = st.session_state.username
+
+# # ---------------- LOAD CHAT ----------------
+# chat_doc = get_today_chat(username, TODAY, st.session_state.session_start)
+# current_chat = chat_doc["messages"]
+
+# # ---------------- HEADER ----------------
+# st.markdown('<h1 class="header">AURA</h1>', unsafe_allow_html=True)
+# st.markdown('<div class="intro">Your personal AI assistant</div>', unsafe_allow_html=True)
+# st.markdown(f'<div class="help">How can I help, {username}?</div>', unsafe_allow_html=True)
+
+# # ---------------- CLEAR CHAT ----------------
+# if st.button("Clear Chat"):
+#     st.session_state.session_start = datetime.now().strftime("%H:%M:%S")
+#     st.rerun()
+
+# # ---------------- CHAT DISPLAY ----------------
+# for msg in current_chat:
+#     if msg["role"] == "user":
+#         st.markdown(
+#             f'<div class="msg-row user-row"><div class="user-msg">{msg["content"]}</div></div>',
+#             unsafe_allow_html=True
+#         )
+#     elif msg["role"] == "assistant":
+#         st.markdown(
+#             f'<div class="msg-row bot-row"><div class="bot-msg">{msg["content"]}</div></div>',
+#             unsafe_allow_html=True
+#         )
+
+# # ---------------- INPUT (MOBILE + DESKTOP) ----------------
+# with st.form("chat_form", clear_on_submit=True):
+#     user_input = st.text_input("Type your message")
+#     send = st.form_submit_button("Send")
+
+# # ---------------- CHATGPT-STYLE THINKING FLOW ----------------
+# if send and user_input:
+#     # 1️⃣ Save user message immediately
+#     current_chat.append({"role": "user", "content": user_input})
+
+#     # 2️⃣ Show "Thinking..." bubble instantly
+#     thinking_placeholder = st.empty()
+#     thinking_placeholder.markdown(
+#         '<div class="msg-row bot-row"><div class="bot-msg">Thinking...</div></div>',
+#         unsafe_allow_html=True
+#     )
+
+#     # 3️⃣ Prepare messages for LLM (system injected dynamically)
+#     messages_for_llm = [
+#         {"role": "system", "content": SYSTEM_PROMPT},
+#         *current_chat
+#     ]
+
+#     # 4️⃣ Call Groq (slow part, but UI already updated)
+#     response = client.chat.completions.create(
+#         model="llama-3.1-8b-instant",
+#         messages=messages_for_llm,
+#         temperature=0.7,
+#         max_tokens=250
+#     )
+
+#     reply = response.choices[0].message.content
+
+#     # 5️⃣ Replace "Thinking..." with actual reply
+#     thinking_placeholder.markdown(
+#         f'<div class="msg-row bot-row"><div class="bot-msg">{reply}</div></div>',
+#         unsafe_allow_html=True
+#     )
+
+#     # 6️⃣ Save assistant message
+#     current_chat.append({"role": "assistant", "content": reply})
+#     save_messages(chat_doc["_id"], current_chat)
+
+#     st.rerun()
 import streamlit as st
 from groq import Groq
 from datetime import date, datetime
@@ -34,7 +213,7 @@ chat_collection = db["chats"]
 
 client = get_groq_client()
 
-# ---------------- CSS ----------------
+# ---------------- CSS (SAME UI AS BEFORE) ----------------
 st.markdown("""
 <style>
 body { background-color: #0e0e0e; }
@@ -76,10 +255,9 @@ def get_today_chat(username, today, session_key):
             "username": username,
             "date": today,
             "session": session_key,
-            "messages": []   # 🔥 system message NOT stored
+            "messages": []  # system message NOT stored
         }
-        result = chat_collection.insert_one(chat)
-        chat["_id"] = result.inserted_id
+        chat["_id"] = chat_collection.insert_one(chat).inserted_id
 
     return chat
 
@@ -134,30 +312,28 @@ for msg in current_chat:
             unsafe_allow_html=True
         )
 
-# ---------------- INPUT (MOBILE + DESKTOP) ----------------
-with st.form("chat_form", clear_on_submit=True):
-    user_input = st.text_input("Type your message")
-    send = st.form_submit_button("Send")
+# ---------------- CHATGPT-LIKE INPUT ----------------
+user_input = st.chat_input("Type your message")
 
-# ---------------- CHATGPT-STYLE THINKING FLOW ----------------
-if send and user_input:
-    # 1️⃣ Save user message immediately
+# ---------------- THINKING FLOW ----------------
+if user_input:
+    # save user message
     current_chat.append({"role": "user", "content": user_input})
 
-    # 2️⃣ Show "Thinking..." bubble instantly
-    thinking_placeholder = st.empty()
-    thinking_placeholder.markdown(
+    # show thinking bubble
+    placeholder = st.empty()
+    placeholder.markdown(
         '<div class="msg-row bot-row"><div class="bot-msg">Thinking...</div></div>',
         unsafe_allow_html=True
     )
 
-    # 3️⃣ Prepare messages for LLM (system injected dynamically)
+    # prepare messages (system injected, not stored)
     messages_for_llm = [
         {"role": "system", "content": SYSTEM_PROMPT},
         *current_chat
     ]
 
-    # 4️⃣ Call Groq (slow part, but UI already updated)
+    # call model
     response = client.chat.completions.create(
         model="llama-3.1-8b-instant",
         messages=messages_for_llm,
@@ -167,13 +343,13 @@ if send and user_input:
 
     reply = response.choices[0].message.content
 
-    # 5️⃣ Replace "Thinking..." with actual reply
-    thinking_placeholder.markdown(
+    # replace thinking with reply
+    placeholder.markdown(
         f'<div class="msg-row bot-row"><div class="bot-msg">{reply}</div></div>',
         unsafe_allow_html=True
     )
 
-    # 6️⃣ Save assistant message
+    # save assistant reply
     current_chat.append({"role": "assistant", "content": reply})
     save_messages(chat_doc["_id"], current_chat)
 
